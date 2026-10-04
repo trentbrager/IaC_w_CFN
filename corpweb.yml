@@ -161,6 +161,7 @@ Resources:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Name: EngineeringWebservers
+      VpcId: !Ref EngineeringVpc
       Protocol: HTTP
       Port: 80
       HealthCheckProtocol: HTTP
@@ -172,7 +173,7 @@ Resources:
         - Id: !Ref web2
           Port: 80
   EngineeringListener:
-    Type: AWS:ElasticLoadBalancingV2::Listener
+    Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
       LoadBalancerArn: !Ref EngineeringLB
       Port: 80
