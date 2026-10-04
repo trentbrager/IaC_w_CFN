@@ -14,8 +14,8 @@ Parameters:
   YourIp:
     Description: Your public IP address in CIDR notation.
     Type: String
-    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])$'
-    ConstraintDescription: Must be a valid CIDR block in the form of X.X.X.X (e.g., 192.168.1.1)
+    AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])/([0-9]|[1-2][0-9]|3[0-2])$'
+    ConstraintDescription: Must be a valid CIDR block (e.g., 203.0.113.25/32)
 Resources:
   EngineeringVpc:
     Type: AWS::EC2::VPC
@@ -26,11 +26,15 @@ Resources:
     Properties:
       VpcId: !Ref EngineeringVpc
       CidrBlock: 10.0.0.0/24
+      AvailabilityZone: us-east-1a
+      MapPublicIpOnLaunch: true
   PublicSubnet2:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref EngineeringVpc
-      CidrBlock: 10.0.1.0/24  
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: us-east-1b
+      MapPublicIpOnLaunch: true
   InternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties: {}
@@ -40,68 +44,64 @@ Resources:
       InternetGatewayId: !Ref InternetGateway
       VpcId: !Ref EngineeringVpc
   S3Role:
-    Type: "AWS::IAM::Role"
+    Type: AWS::IAM::Role
     Properties: 
       AssumeRolePolicyDocument: 
-        Version: "2012-10-17"
+        Version: '2012-10-17'
         Statement: 
-          - Effect: "Allow"
+          - Effect: Allow
             Principal: 
-              Service: 
-                - "ec2.amazonaws.com"
-            Action: 
-              - "sts:AssumeRole"
-      Path: "/"
-      RolePolicies: 
-        - PolicyName: "S3AccessPolicy"
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      Policies: 
+        - PolicyName: S3ReadPolicy
           PolicyDocument: 
-            Version: "2012-10-17"
+            Version: '2012-10-17'
             Statement: 
-              - Effect: "Allow"
-                Action:
-                  - "s3:GetObject"
-                  - "s3:PutObject"
-                  - "s3:ListBucket"
-                Resource: "*"
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: arn:aws:s3:::seis665-public/*
   EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
-      Path: "/"
-      Roles: !Ref "S3Role"
+      Path: /
+      Roles: 
+        - !Ref S3Role
   web1:
     Type: AWS::EC2::Instance
     Properties:
-      IamInstanceProfile: EC2InstanceProfile
+      IamInstanceProfile: !Ref EC2InstanceProfile
       ImageId: ami-0d27e0fb3bac4d724
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyPair
       SecurityGroupIds: 
-        - WebserversSG
-      SubnetId: PublicSubnet1
+        - !Ref WebserversSG
+      SubnetId: !Ref PublicSubnet1
       Tags:
-      - Key: Name
-        Value: web1
+        - Key: Name
+          Value: web1
       UserData:
-        Fn::Base64: !Sub |
+        Fn::Base64: |
            #!/bin/bash
            dnf update -y
            dnf install -y git httpd php
            service httpd start
            chkconfig httpd on
            aws s3 cp s3://seis665-public/index.php /var/www/html/ 
-    web2:
+  web2:
     Type: AWS::EC2::Instance
     Properties:
-      IamInstanceProfile: EC2InstanceProfile
+      IamInstanceProfile: !Ref EC2InstanceProfile
       ImageId: ami-0d27e0fb3bac4d724
       InstanceType: !Ref InstanceType
       KeyName: !Ref KeyPair
       SecurityGroupIds: 
-        - WebserversSG
-      SubnetId: PublicSubnet2
+        - !Ref WebserversSG
+      SubnetId: !Ref PublicSubnet2
       Tags:
-      - Key: Name
-        Value: web2
+        - Key: Name
+          Value: web2
       UserData:
         Fn::Base64: !Sub |
            #!/bin/bash
@@ -113,30 +113,30 @@ Resources:
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
-      VpcId:
-        Ref: classVpc
+      VpcId: !Ref EngineeringVpc
   PublicRoute:
     Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
     Properties:
       DestinationCidrBlock: 0.0.0.0/0
-      RouteTableId:
-        Ref: PublicRouteTable
-      GatewayId:
-        Ref: InternetGateway
-    DependsOn:
-    - InternetGateway
+      RouteTableId: !Ref PublicRouteTable
+      GatewayId: !Ref InternetGateway
   PublicSubnet1RTassoc:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      RouteTableId:
-        Ref: PublicRouteTable
-      SubnetId:
-        Ref: PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+  PublicSubnet2RTassoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
   WebserversSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      VpcId: !Ref EngineeringVpc
+      GroupName: WebserversSG
       GroupDescription: Security group rules for webserver hosts.
+      VpcId: !Ref EngineeringVpc
       SecurityGroupIngress:
       - IpProtocol: tcp
         FromPort: 80
@@ -148,18 +148,41 @@ Resources:
         CidrIp: !Ref YourIp  
   EngineeringLB:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn: VPCGatewayAttachment
     Properties:
+      Name: EngineeringLB
+      Type: application
       Subnets:
         - !Ref PublicSubnet1
         - !Ref PublicSubnet2
-      Type: application
+      SecurityGroups:
+        - !Ref WebserversSG
   EngineeringWebservers:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
-      Protocol: tcp
+      Name: EngineeringWebservers
+      Protocol: HTTP
       Port: 80
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: '80'
+      HealthCheckPath: /
+      Targets:
+        - Id: !Ref web1
+          Port: 80
+        - Id: !Ref web2
+          Port: 80
+  EngineeringListener:
+    Type: AWS:ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref EngineeringLB
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref EngineeringWebservers
 Outputs:
   WebUrl:
+    Description: Load balancer DNS name
     Value:
       Fn::Join:
       - ''
@@ -167,4 +190,4 @@ Outputs:
         - Fn::GetAtt:
           - EngineeringLB
           - DNSName
-    Description: Load balancer DNS name
+    
